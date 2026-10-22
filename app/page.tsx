@@ -153,9 +153,6 @@ interface ProjectCardVideoProps {
   tags: string[];
   colSpan: number;
   offsetTop?: number;
-  isActive: boolean;
-  onHoverStart: () => void;
-  onHoverEnd: () => void;
 }
 
 const VideoPlaceholder = (): ReactElement => (
@@ -200,129 +197,196 @@ const ProjectCardVideo = ({
   tags,
   colSpan,
   offsetTop,
-  isActive,
-  onHoverStart,
-  onHoverEnd,
 }: ProjectCardVideoProps): ReactElement => {
-  const [hovered, setHovered] = useState<boolean>(false);
+  const [engaged, setEngaged] = useState<boolean>(false); // hover, focus, or in view on touch
+  const [loaded, setLoaded] = useState<boolean>(false); // video src is only attached after first engagement
+  const cardRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hasVideo = Boolean(src);
 
+  // Cloudinary serves a still frame if you swap the extension
+  const posterSrc = poster ?? (hasVideo ? src.replace(/\.mp4$/, ".jpg") : undefined);
+
+  // Touch devices have no hover: play the card that is mostly in view instead
+  useEffect(() => {
+    if (!hasVideo || !window.matchMedia("(hover: none)").matches) return;
+    const el = cardRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([entry]) => setEngaged(entry.isIntersecting), {
+      threshold: 0.6,
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasVideo]);
+
+  // Lazy-load on first engagement
+  useEffect(() => {
+    if (engaged && hasVideo) setLoaded(true);
+  }, [engaged, hasVideo]);
+
+  // Play / pause
   useEffect(() => {
     const el = videoRef.current;
-    if (!el || !hasVideo) return;
-    if (isActive) {
+    if (!el) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (engaged && !reduceMotion) {
       el.play().catch(() => {});
     } else {
       el.pause();
-      el.currentTime = 0;
     }
-  }, [isActive, hasVideo]);
+  }, [engaged, loaded]);
 
   return (
     <div
+      ref={cardRef}
+      className="col-full"
       style={{ gridColumn: `span ${colSpan}`, marginTop: offsetTop || 0 }}
-      onMouseEnter={() => {
-        setHovered(true);
-        onHoverStart();
-      }}
-      onMouseLeave={() => {
-        setHovered(false);
-        onHoverEnd();
-      }}
+      tabIndex={0}
+      onMouseEnter={() => setEngaged(true)}
+      onMouseLeave={() => setEngaged(false)}
+      onFocus={() => setEngaged(true)}
+      onBlur={() => setEngaged(false)}
     >
+      {/* Media */}
       <div
         style={{
           position: "relative",
           aspectRatio: "16/9",
           overflow: "hidden",
           background: token.surfaceContainerLowest,
-          cursor: "pointer",
-          border: `1px solid ${hovered ? token.primaryContainer + "88" : token.outlineVariant + "55"}`,
+          border: `1px solid ${engaged ? token.primaryContainer + "88" : token.outlineVariant + "55"}`,
           transition: "border-color 0.3s",
         }}
       >
         {hasVideo ? (
           <video
             ref={videoRef}
-            src={src}
-            poster={poster}
+            src={loaded ? src : undefined}
+            poster={posterSrc}
             muted
             loop
             playsInline
-            preload="metadata"
+            preload="none"
             style={{
               width: "100%",
               height: "100%",
               objectFit: "cover",
-              opacity: 0.5,
-              transform: hovered ? "scale(1.05)" : "scale(1)",
-              transition: "transform 0.7s ease",
+              opacity: engaged ? 1 : 0.75,
+              transition: "opacity 0.3s",
             }}
           />
         ) : (
           <VideoPlaceholder />
         )}
+
         <div
           style={{
             position: "absolute",
             inset: 0,
-            background: "linear-gradient(to top, #10141a 0%, transparent 60%)",
+            background: "linear-gradient(to top, rgba(16,20,26,0.7) 0%, transparent 40%)",
+            pointerEvents: "none",
           }}
         />
+
+        {/* Version badge */}
         <div
           style={{
             position: "absolute",
-            top: 16,
-            right: 16,
+            top: 12,
+            right: 12,
+            padding: "4px 8px",
+            background: "rgba(10,14,20,0.75)",
             fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 13,
+            fontSize: 11,
             color: token.primaryContainer,
           }}
         >
           {version}
         </div>
-        <div style={{ position: "absolute", bottom: 32, left: 32, right: 32 }}>
-          <h3
-            style={{
-              fontFamily: "'Syne', sans-serif",
-              fontSize: 32,
-              fontWeight: 600,
-              color: token.primaryContainer,
-              marginBottom: 8,
-            }}
-          >
-            {title}
-          </h3>
-          {hovered && desc && (
-            <p
-              style={{
-                fontFamily: "'Outfit', sans-serif",
-                fontSize: 16,
-                lineHeight: 1.6,
-                color: token.secondary,
-                marginBottom: 16,
-              }}
-            >
-              {desc}
-            </p>
-          )}
+
+        {/* Play hint, only while idle */}
+        {hasVideo && (
           <div
             style={{
-              display: "flex",
-              gap: 16,
-              flexWrap: "wrap",
+              position: "absolute",
+              bottom: 12,
+              left: 12,
               fontFamily: "'JetBrains Mono', monospace",
-              fontSize: 10,
-              textTransform: "uppercase",
+              fontSize: 11,
               letterSpacing: "0.1em",
-              color: token.outline,
+              color: token.onSurface,
+              opacity: engaged ? 0 : 0.8,
+              transition: "opacity 0.3s",
             }}
           >
-            {tags.map((t) => (
-              <span key={t}>{t}</span>
-            ))}
+            ▶ HOVER TO PREVIEW
           </div>
+        )}
+
+        {/* Scan line */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            width: "100%",
+            height: 2,
+            background: token.primaryContainer,
+            transform: engaged ? "scaleX(1)" : "scaleX(0)",
+            transformOrigin: "left",
+            transition: "transform 0.4s ease",
+          }}
+        />
+      </div>
+
+      {/* Info: always visible, so nothing jumps */}
+      <div style={{ paddingTop: 20 }}>
+        <h3
+          style={{
+            fontFamily: "'Syne', sans-serif",
+            fontSize: 24,
+            fontWeight: 600,
+            color: engaged ? token.primaryContainer : token.onSurface,
+            transition: "color 0.3s",
+            marginBottom: 8,
+          }}
+        >
+          {title}
+        </h3>
+        <p
+          style={{
+            fontFamily: "'Outfit', sans-serif",
+            fontSize: 15,
+            lineHeight: 1.6,
+            color: token.secondary,
+            marginBottom: 12,
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}
+        >
+          {desc}
+        </p>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 11,
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
+          }}
+        >
+          {tags.map((t) => (
+            <span
+              key={t}
+              style={{ padding: "2px 8px", border: `1px solid ${token.outlineVariant}`, color: token.outline }}
+            >
+              {t}
+            </span>
+          ))}
         </div>
       </div>
     </div>
@@ -747,7 +811,7 @@ const projectItems: ProjectItem[] = [
   {
     id: "herconomy",
     colSpan: 7,
-    src: "/videos/herconomy.mp4",
+    src: "https://res.cloudinary.com/gb6p9b7e/video/upload/v1790240860/herconomy.mp4",
     version: "02/2026 — PRESENT",
     title: "Herconomy Admin Dashboard",
     desc: "Frontend for a savings and investment platform, built with Next.js and Tailwind CSS.",
@@ -756,7 +820,7 @@ const projectItems: ProjectItem[] = [
   {
     id: "monsera",
     colSpan: 5,
-    src: "/videos/monsera.mp4",
+    src: "https://res.cloudinary.com/gb6p9b7e/video/upload/v1790240850/monsera.mp4",
     version: "01/2026 — PRESENT",
     title: "Monsera Admin Dashboard",
     desc: "Role-based credit dashboard for electricity-bill financing across Admin, Aggregator, DisCo, and Finance House roles.",
@@ -774,7 +838,7 @@ const projectItems: ProjectItem[] = [
   {
     id: "phc-fms",
     colSpan: 7,
-    src: "/videos/phc.mp4",
+    src: "https://res.cloudinary.com/gb6p9b7e/video/upload/v1790598665/phc.mp4",
     version: "10/2026 — PRESENT",
     title: "PHC-FMS",
     desc: "Financial management platform for healthcare institutions across Nigeria, frontend and backend.",
@@ -790,36 +854,18 @@ const projectItems: ProjectItem[] = [
     tags: ["React", "PostgreSQL"],
   },
   {
-    id: "expense-mgmt",
-    colSpan: 5,
-    src: "",
-    version: "06/2026 — PRESENT",
-    title: "Business Expense Management",
-    desc: "Interfaces for businesses to manage expenses, monitor cash flow, and oversee finances end to end.",
-    tags: ["Next.js", "React"],
-  },
-  {
     id: "dara",
     colSpan: 5,
-    src: "/videos/dara.mp4",
+    src: "https://res.cloudinary.com/gb6p9b7e/video/upload/v1790074159/dara.mp4",
     version: "06/2025 — PRESENT",
     title: "Dara",
     desc: "Backend for a platform bridging discerning customers with skilled service providers.",
     tags: ["Node.js", "REST APIs"],
   },
   {
-    id: "boardmeet",
-    colSpan: 7,
-    src: "",
-    version: "01/2025 — PRESENT",
-    title: "Boardmeet",
-    desc: "Authentication, database integration, and RESTful APIs for a board-meeting facilitation platform.",
-    tags: ["Spring Boot", "Keycloak"],
-  },
-  {
     id: "boardseats",
     colSpan: 5,
-    src: "/videos/boardseats.mp4",
+    src: "https://res.cloudinary.com/gb6p9b7e/video/upload/v1790002509/boardseats.mp4",
     version: "06/2024 — PRESENT",
     title: "Boardseats",
     desc: "Platform connecting eligible candidates with organizations — MySQL access layer, stored procedures, optimized document retrieval.",
@@ -828,7 +874,7 @@ const projectItems: ProjectItem[] = [
   {
     id: "stanbic-grc",
     colSpan: 7,
-    src: "/videos/stanbic-grc.mp4",
+    src: "https://res.cloudinary.com/gb6p9b7e/video/upload/v1790074163/grc.mp4",
     version: "09/2024 — PRESENT",
     title: "Governance, Risk & Compliance Portal",
     desc: "Incident entry module for Stanbic IBTC's enterprise governance, risk, and compliance portal.",
@@ -837,74 +883,55 @@ const projectItems: ProjectItem[] = [
   {
     id: "plant-entry",
     colSpan: 5,
-    src: "/videos/plant.mp4",
+    src: "https://res.cloudinary.com/gb6p9b7e/video/upload/v1790598650/plant.mp4",
     version: "06/2024 — 10/2024",
     title: "Plant Entry",
     desc: "Plant-performance monitoring and reporting system for Dangote Fertilizers, with JPA/Hibernate data access.",
     tags: ["Spring Boot", "Vaadin", "MySQL"],
   },
-  {
-    id: "poc-projects",
-    colSpan: 12,
-    src: "",
-    version: "11/2024 — 01/2025",
-    title: "Proof of Concept Projects",
-    desc: "Smart Home automation, a Stock Trading platform with predictive recommendations, and a Traffic Simulation engine — built solo as lead developer.",
-    tags: ["Spring Boot", "Vaadin", "MySQL"],
-  },
 ];
 
 /* ─── Projects ───────────────────────────────────────────────── */
-const Projects = (): ReactElement => {
-  // id of the video that should currently be playing.
-  // Defaults to the first project so the row autoplays on load once footage exists.
-  const firstVideoId = projectItems[0]?.id ?? null;
-  const [activeVideoId, setActiveVideoId] = useState<string | null>(firstVideoId);
-
-  return (
-    <section id="projects" style={{ padding: "120px 0", borderTop: `1px solid ${token.outlineVariant}33` }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-end",
-          marginBottom: 64,
-          flexWrap: "wrap",
-          gap: 24,
-        }}
-      >
-        <div>
-          <SectionLabel>// 03_RELEVANT_WORKS</SectionLabel>
-          <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: 48, fontWeight: 700, color: token.onSurface }}>
-            Architectural Catalog
-          </h2>
-        </div>
-        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: token.secondary }}>
-          Total Projects Released: [{String(projectItems.length).padStart(2, "0")}]
-        </span>
+const Projects = (): ReactElement => (
+  <section id="projects" style={{ padding: "120px 0", borderTop: `1px solid ${token.outlineVariant}33` }}>
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "flex-end",
+        marginBottom: 64,
+        flexWrap: "wrap",
+        gap: 24,
+      }}
+    >
+      <div>
+        <SectionLabel>// 03_RELEVANT_WORKS</SectionLabel>
+        <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: 48, fontWeight: 700, color: token.onSurface }}>
+          Architectural Catalog
+        </h2>
       </div>
+      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: token.secondary }}>
+        Total Projects Released: [{String(projectItems.length).padStart(2, "0")}]
+      </span>
+    </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(12,1fr)", gap: 24 }}>
-        {projectItems.map((item) => (
-          <ProjectCardVideo
-            key={item.id}
-            colSpan={item.colSpan}
-            offsetTop={item.offsetTop}
-            src={item.src}
-            poster={item.poster}
-            version={item.version}
-            title={item.title}
-            desc={item.desc}
-            tags={item.tags}
-            isActive={activeVideoId === item.id}
-            onHoverStart={() => setActiveVideoId(item.id)}
-            onHoverEnd={() => setActiveVideoId(firstVideoId)}
-          />
-        ))}
-      </div>
-    </section>
-  );
-};
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(12,1fr)", gap: "48px 24px" }}>
+      {projectItems.map((item) => (
+        <ProjectCardVideo
+          key={item.id}
+          colSpan={item.colSpan}
+          offsetTop={item.offsetTop}
+          src={item.src}
+          poster={item.poster}
+          version={item.version}
+          title={item.title}
+          desc={item.desc}
+          tags={item.tags}
+        />
+      ))}
+    </div>
+  </section>
+);
 
 /* ─── Experience ─────────────────────────────────────────────── */
 interface ExperienceEntry {
